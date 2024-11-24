@@ -1,8 +1,9 @@
 import numpy as np
 import torch
 from deap import base, creator, tools
+import os
 
-class HybridCuckooGAWithSA:
+class GeneticAlgorithmEvolution:
     def __init__(self, min_weight, max_weight, last_layer_shape, validation_class):
         self.min_weight = min_weight
         self.max_weight = max_weight
@@ -83,8 +84,8 @@ class HybridCuckooGAWithSA:
         accuracy = self.validation_class.validate_model_with_weights(individual_tensor)
         return accuracy,
 
-    def run(self, population_size=100, num_generations=50, stop_threshold=93):
-        """Run the hybrid CS-GA with Simulated Annealing."""
+    def run(self, population_size=100, num_generations=50, stop_threshold=93, checkpoint_file="ga_checkpoint.pt", save_interval=5):
+        """Run the hybrid CS-GA-SA algorithm with periodic checkpointing."""
         self.toolbox.register("evaluate", self.fitness_function)
 
         # Initialize population
@@ -94,8 +95,17 @@ class HybridCuckooGAWithSA:
         initial_temperature = 1.0
         cooling_rate = 0.95
 
-        for generation in range(num_generations):
-            print(f"Generation {generation + 1}")
+        # Resume from checkpoint if it exists
+        start_generation = 1
+        if os.path.exists(checkpoint_file):
+            checkpoint = torch.load(checkpoint_file)
+            population = checkpoint["population"]
+            start_generation = checkpoint["generation"] + 1
+            initial_temperature = checkpoint["temperature"]
+            print(f"Resuming from generation {start_generation}.")
+
+        for generation in range(start_generation, num_generations + 1):
+            print(f"Generation {generation}")
 
             # Evaluate fitness
             fitnesses = list(map(self.toolbox.evaluate, population))
@@ -105,7 +115,7 @@ class HybridCuckooGAWithSA:
             # Check for stopping criterion
             best_ind = tools.selBest(population, k=1)[0]
             best_fitness = best_ind.fitness.values[0]
-            print(f"Best accuracy in Generation {generation + 1}: {best_fitness:.2f}%")
+            print(f"Best accuracy in Generation {generation}: {best_fitness:.2f}%")
 
             if best_fitness >= stop_threshold:
                 print("Stopping criterion reached.")
@@ -136,6 +146,15 @@ class HybridCuckooGAWithSA:
 
             # Update temperature for Simulated Annealing
             initial_temperature *= cooling_rate
+
+            # Save checkpoint every `save_interval` generations
+            if generation % save_interval == 0:
+                torch.save({
+                    "population": population,
+                    "generation": generation,
+                    "temperature": initial_temperature,
+                }, checkpoint_file)
+                print(f"Checkpoint saved at generation {generation}.")
 
         # Return the best individual from the final generation
         return tools.selBest(population, k=1)[0]
