@@ -19,9 +19,15 @@ class GeneticAlgorithmEvolution:
             "individual", tools.initRepeat, creator.Individual, self.toolbox.attr_float, n=np.prod(last_layer_shape)
         )
         self.toolbox.register("population", tools.initRepeat, list, self.toolbox.individual)
-        self.toolbox.register("mate", tools.cxBlend, alpha=0.5)
+
+        # Use Two-Point Crossover
+        self.toolbox.register("mate", tools.cxTwoPoint)
+
+        # Use Gaussian Mutation with adaptive probability (set dynamically in `run`)
         self.toolbox.register("mutate", tools.mutGaussian, mu=0, sigma=0.2, indpb=0.2)
-        self.toolbox.register("select", tools.selTournament, tournsize=3)
+
+        # Use Roulette Selection
+        self.toolbox.register("select", tools.selRoulette)
 
     def fitness_function(self, individual):
         """Evaluate fitness by setting weights and computing accuracy."""
@@ -56,19 +62,22 @@ class GeneticAlgorithmEvolution:
             offspring = self.toolbox.select(population, len(population))
             offspring = list(map(self.toolbox.clone, offspring))
 
-            # Crossover
+            # Apply Two-Point Crossover
             for child1, child2 in zip(offspring[::2], offspring[1::2]):
                 if np.random.rand() < 0.5:
                     self.toolbox.mate(child1, child2)
                     del child1.fitness.values
                     del child2.fitness.values
 
-            # Mutation
+            # Adaptive Mutation Probability
+            mutation_prob = 1 - (generation / num_generations)  # Decrease mutation probability over generations
             for mutant in offspring:
-                if np.random.rand() < 0.2:
+                if np.random.rand() < mutation_prob:
                     self.toolbox.mutate(mutant)
                     del mutant.fitness.values
 
+            # Replace population with offspring
             population[:] = offspring
 
+        # Return the best individual from the final generation
         return tools.selBest(population, k=1)[0]
