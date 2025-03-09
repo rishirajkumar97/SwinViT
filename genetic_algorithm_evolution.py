@@ -2,14 +2,15 @@ import numpy as np
 import torch
 from deap import base, creator, tools
 import os
-
+import logging
 class GeneticAlgorithmEvolution:
     def __init__(self, min_weight, max_weight, last_layer_shape, validation_class):
         self.min_weight = min_weight
         self.max_weight = max_weight
         self.last_layer_shape = last_layer_shape
         self.validation_class = validation_class
-
+        self.logger = logging.getLogger(__name__)
+        logging.basicConfig(filename='ga_hybrid.log', level=logging.INFO)
         # DEAP Setup
         creator.create("FitnessMax", base.Fitness, weights=(1.0,))  # Maximize accuracy
         creator.create("Individual", list, fitness=creator.FitnessMax)
@@ -49,7 +50,7 @@ class GeneticAlgorithmEvolution:
             else:
                 return current_ind  # Keep current solution
 
-    def cuckoo_search_with_sa(self, population, step_size=0.01, fraction=0.25, temperature=1.0):
+    def cuckoo_search_with_sa(self, population, step_size=0.04, fraction=0.25, temperature=1.0):
         """Introduce cuckoo solutions using Lévy flights and apply Simulated Annealing."""
         num_cuckoos = int(len(population) * fraction)
         new_cuckoos = []
@@ -84,7 +85,22 @@ class GeneticAlgorithmEvolution:
         accuracy = self.validation_class.validate_model_with_weights(individual_tensor)
         return accuracy,
 
-    def run(self, population_size=100, num_generations=50, stop_threshold=93, checkpoint_file="ga_checkpoint.pt", save_interval=5):
+    def _evaluate_population_with_cuda_streams(self, population, generation , total_generations):
+        """Evaluate fitness of the population using CUDA streams."""
+        streams = [torch.cuda.Stream(device=self.validation_class.device) for _ in range(len(population))]
+        fitness_results = [None] * len(population)
+
+        # Start evaluation in parallel streams
+        for i, (ind, stream) in enumerate(zip(population, streams)):
+            with torch.cuda.stream(stream):
+                weights = torch.FloatTensor(ind).reshape(self.last_layer_shape).to(self.validation_class.device)
+                fitness_results[i] = self.validation_class.validate_model_with_weights(weights, generation, total_generations)
+
+        # Synchronize all streams
+        torch.cuda.synchronize(self.validation_class.device)
+        return fitness_results
+
+    def run(self, population_size=100, num_generations=50, stop_threshold=99, checkpoint_file="ga_hybrid_checkpoint.pt", save_interval=4):
         """Run the hybrid CS-GA-SA algorithm with periodic checkpointing."""
         self.toolbox.register("evaluate", self.fitness_function)
 
@@ -101,21 +117,26 @@ class GeneticAlgorithmEvolution:
             checkpoint = torch.load(checkpoint_file)
             population = checkpoint["population"]
             start_generation = checkpoint["generation"] + 1
-            initial_temperature = checkpoint["temperature"]
+            initial_temperature = 1 # Reset Temperature to 1 or adjust as required. 
             print(f"Resuming from generation {start_generation}.")
 
         for generation in range(start_generation, num_generations + 1):
             print(f"Generation {generation}")
 
             # Evaluate fitness
-            fitnesses = list(map(self.toolbox.evaluate, population))
-            for ind, fit in zip(population, fitnesses):
-                ind.fitness.values = fit
+            fitnesses = self._evaluate_population_with_cuda_streams(population, generation, num_generations)
+            for ind, fitness in zip(population, fitnesses):
+                ind.fitness.values = (fitness,)
+
+            # Older Code without parallel Processing
+            # fitnesses = list(map(self.toolbox.evaluate, ))
+            # for ind, fit in zip(population, fitnesses):
+            #     ind.fitness.values = fit
 
             # Check for stopping criterion
             best_ind = tools.selBest(population, k=1)[0]
             best_fitness = best_ind.fitness.values[0]
-            print(f"Best accuracy in Generation {generation}: {best_fitness:.2f}%")
+            self.logger.info(f"Best accuracy in Generation {generation}: {best_fitness:.2f}%")
 
             if best_fitness >= stop_threshold:
                 print("Stopping criterion reached.")
@@ -147,7 +168,7 @@ class GeneticAlgorithmEvolution:
             # Update temperature for Simulated Annealing
             initial_temperature *= cooling_rate
 
-            # Save checkpoint every `save_interval` generations
+            # Save checkpoint asynchronously every `save_interval` generations
             if generation % save_interval == 0:
                 torch.save({
                     "population": population,
