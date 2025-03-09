@@ -59,7 +59,7 @@ pip install -r requirements.txt
 To replicate the reported results, run `main.py` with the following hyperparameters:
 
 ```bash
-python main.py  --patch_size 2 \
+python3 main.py  --patch_size 2 \
                 --weight_decay 0.1 \
                 --batch_size 128 \
                 --epochs 200 \
@@ -87,7 +87,14 @@ number of parameter: 7048612
 |  norm        |  0.768K                |  30.72K  |
 |  head        |  3.85K                 |  3.84K   |
 ```
+# Optimization of Last Layer
+- The project builds upon the SwinVIT by destroying the weights of the last layer of the neural network after 100 epochs.
+- In the next step, hybrid search optimization algorithms such as Genetic Algorithms and Hybrid CMA-DE or Evolution Strategies are applied to find the best maximum in terms of training data.
+- The Project also has files to take into account in theory a fitness score which can be combined using both train data accuracy and val data accuracy in a weighted manner to ensure the model stays generic.
 
+![alt text](image.png)
+
+- The above figure shows the training accuracy over the epochs via the normal gradient descent (SGD as default) and with other complex algorithms which can better scour the search space for global maxima (w.r.t to training accuracy)
 ## Citation
 ```bibtex
 @article{liu2021Swin,
